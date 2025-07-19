@@ -1,2 +1,3 @@
-from span_marker.optim.modeling import SpanMarkerModel
-from span_marker.optim.trainer import Trainer
+from .data_collator import SpanMarkerDataCollator
+from .modeling import SpanMarkerModel
+from .trainer import Trainer

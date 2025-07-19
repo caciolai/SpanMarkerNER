@@ -6,6 +6,7 @@ from torch import Tensor
 
 from span_marker.modeling import SpanMarkerModel as BaseSpanMarkerModel
 from span_marker.optim.data_collator import SpanMarkerDataCollator
+from span_marker.optim.utils import spread_sample
 from span_marker.output import SpanMarkerOutput
 from span_marker.tokenizer import SpanMarkerTokenizer
 
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class SpanMarkerModel(BaseSpanMarkerModel):
+    spread_sample_fn = staticmethod(spread_sample)
+
     def set_tokenizer(self, tokenizer: SpanMarkerTokenizer) -> None:
         self.tokenizer = tokenizer
         self.data_collator = SpanMarkerDataCollator(

@@ -18,6 +18,7 @@ from span_marker.data_collator import SpanMarkerDataCollator
 from span_marker.model_card import SpanMarkerModelCardData, generate_model_card
 from span_marker.output import SpanMarkerOutput
 from span_marker.tokenizer import SpanMarkerTokenizer
+from span_marker.utils import add_context, spread_sample
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ class SpanMarkerModel(PreTrainedModel):
     config_class = SpanMarkerConfig
     base_model_prefix = "encoder"
     _no_split_modules = []  # To support `load_in_8bit=True`` and `device_map="auto"`
+
+    spread_sample_fn = staticmethod(spread_sample)
 
     def __init__(
         self,
@@ -396,7 +399,6 @@ class SpanMarkerModel(PreTrainedModel):
 
                 If the input is multiple sentences, then we return a list containing multiple of the aforementioned lists.
         """
-        from span_marker.trainer import Trainer
 
         if torch.cuda.is_available() and self.device == torch.device("cpu"):
             logger.warning(
@@ -457,7 +459,7 @@ class SpanMarkerModel(PreTrainedModel):
 
         # Tokenize & add start/end markers
         tokenizer_dict = self.tokenizer(
-            {"tokens": dataset["tokens"]}, return_num_words=True, return_batch_encoding=True
+            {"tokens": list(dataset["tokens"])}, return_num_words=True, return_batch_encoding=True
         )
         batch_encoding = tokenizer_dict.pop("batch_encoding")
         dataset = dataset.remove_columns("tokens")
@@ -474,7 +476,7 @@ class SpanMarkerModel(PreTrainedModel):
             dataset = dataset.add_column("__sort_id", range(len(dataset)))
             # Sorting by doc ID and then sentence ID is required for add_context
             dataset = dataset.sort(column_names=["document_id", "sentence_id"])
-            dataset = Trainer.add_context(
+            dataset = add_context(
                 dataset,
                 self.tokenizer.model_max_length,
                 max_prev_context=self.config.max_prev_context,
@@ -492,7 +494,7 @@ class SpanMarkerModel(PreTrainedModel):
         if not show_progress_bar:
             disable_progress_bar()
         dataset = dataset.map(
-            Trainer.spread_sample,
+            self.spread_sample_fn,
             batched=True,
             desc="Spreading data between multiple samples",
             fn_kwargs={

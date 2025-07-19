@@ -24,7 +24,7 @@ maintainers = [
     {name = "Tom Aarsen"}
 ]
 dependencies = [
-    "torch",
+    "torch<2.7",
     "accelerate",
     "transformers>=4.23.0,<5", # required for EvalPrediction.inputs
     "datasets>=2.14.0", # required for sorting with multiple columns
@@ -36,6 +36,9 @@ dependencies = [
     "huggingface_hub>=0.24.0",
     "hydra-core",
     "wandb",
+    "onnx", 
+    "onnxruntime-gpu==1.21",
+    "optimum"
 ]
 dynamic = ["version"]
 

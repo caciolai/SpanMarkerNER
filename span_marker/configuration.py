@@ -113,10 +113,6 @@ class SpanMarkerConfig(PretrainedConfig):
         try:
             return super().__getattribute__(key)
         except AttributeError as e:
-            if key == "quantization_config":
-                # Handle quantization_config explicitly if it's not set
-                return dict()
-
             encoder = super().__getattribute__("encoder")
 
             # Check for 'encoder' being None before trying to subscript it
