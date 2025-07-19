@@ -1,67 +1,48 @@
+import os
+import random
+from pathlib import Path
+
+import hydra
+import numpy as np
+import torch
 from datasets import load_dataset
-from transformers import TrainingArguments
+from omegaconf import DictConfig
+from transformers import Trainer
 
-from span_marker import SpanMarkerModel, SpanMarkerModelCardData, Trainer
+from span_marker import SpanMarkerModel
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-def main() -> None:
+@hydra.main(config_path="hydra_configs", config_name="baseline", version_base=None)
+def main(cfg: DictConfig) -> None:
+    # Seed everything
+    seed = cfg.experiment.seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     # Load the dataset, ensure "tokens" and "ner_tags" columns, and get a list of labels
-    dataset_id = "conll2003"
-    dataset_name = "CoNLL 2003"
-    dataset = load_dataset(dataset_id)
+    dataset = load_dataset(cfg.dataset.id, trust_remote_code=True)
     labels = dataset["train"].features["ner_tags"].feature.names
 
-    # Initialize a SpanMarker model using a pretrained BERT-style encoder
-    encoder_id = "xlm-roberta-large"
-    model = SpanMarkerModel.from_pretrained(
-        encoder_id,
-        labels=labels,
-        # SpanMarker hyperparameters:
-        model_max_length=128,
-        marker_max_length=64,
-        entity_max_length=6,
-        # Model card arguments
-        model_card_data=SpanMarkerModelCardData(
-            model_id="tomaarsen/span-marker-xlm-roberta-large-conll03",
-            encoder_id=encoder_id,
-            dataset_name=dataset_name,
-            dataset_id=dataset_id,
-            license="other",
-            language="en",
-        ),
-    )
+    # Instantiate model
+    model: SpanMarkerModel = hydra.utils.instantiate(cfg.model, labels=labels)
 
     # Prepare the 🤗 transformers training arguments
-    args = TrainingArguments(
-        output_dir="models/span_marker_xlm_roberta_large_conll03",
-        # Training Hyperparameters:
-        learning_rate=1e-5,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=2,
-        num_train_epochs=3,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        bf16=True,  # Replace `bf16` with `fp16` if your hardware can't use bf16.
-        # Other Training parameters
-        logging_first_step=True,
-        logging_steps=50,
-        evaluation_strategy="steps",
-        save_strategy="steps",
-        eval_steps=1000,
-        save_total_limit=2,
-        dataloader_num_workers=2,
-    )
 
-    # Initialize the trainer using our model, training args & dataset, and train
-    trainer = Trainer(
+    trainer: Trainer = hydra.utils.instantiate(
+        cfg.trainer,
         model=model,
-        args=args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
     )
     trainer.train()
-    trainer.save_model("models/span_marker_xlm_roberta_large_conll03/checkpoint-final")
+    checkpoint_path = Path(cfg.experiment.checkpoint_path)
+    checkpoint_path.parent.mkdir(exist_ok=True, parents=True)
+    trainer.save_model(checkpoint_path)
 
     # Compute & save the metrics on the test set
     metrics = trainer.evaluate(dataset["test"], metric_key_prefix="test")

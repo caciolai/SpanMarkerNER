@@ -542,9 +542,11 @@ class SpanMarkerModel(PreTrainedModel):
                     char_start_index = batch_encoding.word_to_chars(sample_idx, word_start_index).start
                     char_end_index = batch_encoding.word_to_chars(sample_idx, word_end_index - 1).end
                     entity = {
-                        "span": sentence[char_start_index:char_end_index]
-                        if isinstance(sentence, str)
-                        else sentence[word_start_index:word_end_index],
+                        "span": (
+                            sentence[char_start_index:char_end_index]
+                            if isinstance(sentence, str)
+                            else sentence[word_start_index:word_end_index]
+                        ),
                         "label": id2label[label_id],
                         "score": score,
                     }
@@ -560,9 +562,9 @@ class SpanMarkerModel(PreTrainedModel):
             all_entities.append(
                 sorted(
                     sentence_entities,
-                    key=lambda entity: entity["char_start_index"]
-                    if isinstance(sentence, str)
-                    else entity["word_start_index"],
+                    key=lambda entity: (
+                        entity["char_start_index"] if isinstance(sentence, str) else entity["word_start_index"]
+                    ),
                 )
             )
         # if the input was a string or a list of tokens, return a list of dictionaries

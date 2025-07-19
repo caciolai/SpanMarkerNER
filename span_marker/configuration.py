@@ -113,10 +113,16 @@ class SpanMarkerConfig(PretrainedConfig):
         try:
             return super().__getattribute__(key)
         except AttributeError as e:
-            try:
-                return super().__getattribute__("encoder")[key]
-            except KeyError:
-                raise e
+            if key == "quantization_config":
+                # Handle quantization_config explicitly if it's not set
+                return dict()
+
+            encoder = super().__getattribute__("encoder")
+
+            # Check for 'encoder' being None before trying to subscript it
+            if encoder is not None and key in encoder:
+                return encoder[key]
+            raise e
 
     def are_labels_schemed(self) -> bool:
         """True if all labels are strings matching one of the two following rules:

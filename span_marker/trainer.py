@@ -10,10 +10,12 @@ from torch.utils.data import DataLoader
 from tqdm.autonotebook import tqdm
 from transformers import (
     EvalPrediction,
+)
+from transformers import Trainer as TransformersTrainer
+from transformers import (
     TrainerCallback,
     TrainingArguments,
 )
-from transformers import Trainer as TransformersTrainer
 from transformers.trainer_utils import PredictionOutput
 
 from span_marker.evaluation import compute_f1_via_seqeval
@@ -188,6 +190,7 @@ class Trainer(TransformersTrainer):
         Returns:
             Dataset: The normalized and tokenized version of the input dataset.
         """
+        num_workers = min(os.cpu_count() // 2, 16)
         for column in self.REQUIRED_COLUMNS:
             if column not in dataset.column_names:
                 raise ValueError(f"The {dataset_name} dataset must contain a {column!r} column.")
@@ -203,6 +206,8 @@ class Trainer(TransformersTrainer):
             input_columns=("tokens", "ner_tags"),
             desc=f"Label normalizing the {dataset_name} dataset",
             batched=True,
+            num_proc=num_workers,
+            load_from_cache_file=False,
         )
 
         # Setting model card data based on training data
@@ -230,6 +235,8 @@ class Trainer(TransformersTrainer):
                 remove_columns=set(dataset.column_names) - set(self.OPTIONAL_COLUMNS),
                 desc=f"Tokenizing the {dataset_name} dataset",
                 fn_kwargs={"return_num_words": is_evaluate},
+                num_proc=num_workers,
+                load_from_cache_file=False,
             )
         # If "document_id" AND "sentence_id" exist in the training dataset
         if {"document_id", "sentence_id"} <= set(dataset.column_names):
@@ -258,13 +265,15 @@ class Trainer(TransformersTrainer):
         # Spread between multiple samples where needed
         original_length = len(dataset)
         dataset = dataset.map(
-            Trainer.spread_sample,
+            self.get_spread_sample_fn(),
             batched=True,
             desc="Spreading data between multiple samples",
             fn_kwargs={
                 "model_max_length": tokenizer.model_max_length,
                 "marker_max_length": self.model.config.marker_max_length,
             },
+            num_proc=num_workers,
+            load_from_cache_file=False,
         )
         new_length = len(dataset)
         logger.info(
@@ -365,44 +374,46 @@ class Trainer(TransformersTrainer):
 
         return dataset
 
-    @staticmethod
-    def spread_sample(
-        batch: Dict[str, List[Any]], model_max_length: int, marker_max_length: int
-    ) -> Dict[str, List[Any]]:
-        """Spread sentences between multiple samples if lack of space per sample requires it.
+    def get_spread_sample_fn(self):
+        def spread_sample(
+            batch: Dict[str, List[Any]], model_max_length: int, marker_max_length: int
+        ) -> Dict[str, List[Any]]:
+            """Spread sentences between multiple samples if lack of space per sample requires it.
 
-        Args:
-            batch (`Dict[str, List[Any]]`): A dictionary of dataset keys to lists of values.
-            model_max_length (`int`): The total number of tokens that can be processed before
-                truncation.
-            marker_max_length (`int`): The maximum length for each of the span markers. A value of 128
-                means that each training and inferencing sample contains a maximum of 128 start markers
-                and 128 end markers, for a total of 256 markers per sample.
+            Args:
+                batch (`Dict[str, List[Any]]`): A dictionary of dataset keys to lists of values.
+                model_max_length (`int`): The total number of tokens that can be processed before
+                    truncation.
+                marker_max_length (`int`): The maximum length for each of the span markers. A value of 128
+                    means that each training and inferencing sample contains a maximum of 128 start markers
+                    and 128 end markers, for a total of 256 markers per sample.
 
-        Returns:
-            Dict[str, List[Any]]: A dictionary of dataset keys to lists of values.
-        """
-        keys = batch.keys()
-        values = batch.values()
-        total_sample_length = model_max_length + 2 * marker_max_length
+            Returns:
+                Dict[str, List[Any]]: A dictionary of dataset keys to lists of values.
+            """
+            keys = batch.keys()
+            values = batch.values()
+            total_sample_length = model_max_length + 2 * marker_max_length
 
-        batch_samples = {key: [] for key in keys}
-        for sample in zip(*values):
-            sample = dict(zip(keys, sample))
-            sample_marker_space = (total_sample_length - len(sample["input_ids"])) // 2
-            spread_between_n = math.ceil(len(sample["start_position_ids"]) / sample_marker_space)
-            for i in range(spread_between_n):
-                sample_copy = sample.copy()
-                start = i * sample_marker_space
-                end = (i + 1) * sample_marker_space
-                sample_copy["start_position_ids"] = sample["start_position_ids"][start:end]
-                sample_copy["end_position_ids"] = sample["end_position_ids"][start:end]
-                if "labels" in sample:
-                    sample_copy["labels"] = sample["labels"][start:end]
-                sample_copy["num_spans"] = len(sample_copy["start_position_ids"])
-                for key, value in sample_copy.items():
-                    batch_samples[key].append(value)
-        return batch_samples
+            batch_samples = {key: [] for key in keys}
+            for sample in zip(*values):
+                sample = dict(zip(keys, sample))
+                sample_marker_space = (total_sample_length - len(sample["input_ids"])) // 2
+                spread_between_n = math.ceil(len(sample["start_position_ids"]) / sample_marker_space)
+                for i in range(spread_between_n):
+                    sample_copy = sample.copy()
+                    start = i * sample_marker_space
+                    end = (i + 1) * sample_marker_space
+                    sample_copy["start_position_ids"] = sample["start_position_ids"][start:end]
+                    sample_copy["end_position_ids"] = sample["end_position_ids"][start:end]
+                    if "labels" in sample:
+                        sample_copy["labels"] = sample["labels"][start:end]
+                    sample_copy["num_spans"] = len(sample_copy["start_position_ids"])
+                    for key, value in sample_copy.items():
+                        batch_samples[key].append(value)
+            return batch_samples
+
+        return spread_sample
 
     def get_train_dataloader(self) -> DataLoader:
         """Return the preprocessed training DataLoader."""
