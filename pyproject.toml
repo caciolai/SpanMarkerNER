@@ -38,7 +38,8 @@ dependencies = [
     "wandb",
     "onnx", 
     "onnxruntime-gpu==1.21",
-    "optimum"
+    "optimum",
+    "tritonclient[grpc]",
 ]
 dynamic = ["version"]
 

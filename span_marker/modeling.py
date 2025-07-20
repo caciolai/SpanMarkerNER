@@ -493,6 +493,8 @@ class SpanMarkerModel(PreTrainedModel):
 
         if not show_progress_bar:
             disable_progress_bar()
+
+        num_workers = min(16, os.cpu_count() / 2)
         dataset = dataset.map(
             self.spread_sample_fn,
             batched=True,
@@ -501,6 +503,7 @@ class SpanMarkerModel(PreTrainedModel):
                 "model_max_length": self.tokenizer.model_max_length,
                 "marker_max_length": self.config.marker_max_length,
             },
+            num_proc=num_workers,
         )
         if not show_progress_bar:
             enable_progress_bar()

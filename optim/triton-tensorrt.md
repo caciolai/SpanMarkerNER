@@ -15,9 +15,12 @@ Instance `g5.48xlarge` with AL2023 AMI and NVIDIA drivers installed as follows h
 
 ## Prerequisites
 
-Run the Convert-SpanMarker-to-ONNX notebook, to obtain `model.onnx`
+Run the preparation script as follows
+```
+python3 optim/prepare_for_triton.py --model_path models/optim-span-marker-xlm-roberta-base-conll2003/best_model
+```
 
-Create a model repository like the following
+This will create a model repository like the following
 ```
 triton_model_repository
 `-- spanmarker
@@ -33,44 +36,40 @@ input [
   {
     name: "input_ids"
     data_type: TYPE_INT64
-    dims: [ 1, 256 ]
+    dims: [ 256 ]
   },
   {
     name: "attention_mask"
     data_type: TYPE_BOOL
-    dims: [ 1, 256, 256 ]
+    dims: [ 256, 256 ]
   },
   {
     name: "position_ids"
     data_type: TYPE_INT64
-    dims: [ 1, 256 ]
+    dims: [ 256 ]
   },
   {
     name: "num_marker_pairs.1"
     data_type: TYPE_INT64
-    dims: [ 1 ]
   },
   {
     name: "num_words.1"
     data_type: TYPE_INT64
-    dims: [ 1 ]
   }
 ]
 output [
   {
     name: "logits"
     data_type: TYPE_FP32
-    dims: [ -1, 64, 5 ]
+    dims: [ 64, 5 ]
   },
   {
     name: "num_marker_pairs"
     data_type: TYPE_INT64
-    dims: [ -1 ]
   },
   {
     name: "num_words"
     data_type: TYPE_INT64
-    dims: [ -1 ]
   }
 ]
 instance_group [
@@ -81,13 +80,13 @@ instance_group [
   }
 ]
 ```
-Ensure dimensions are aligned with the ONNX obtained in the step before.
+Ensure the dimensions are what you expected! These are taken from the torch model config directly
 
 ## Setup
 
 ### Install docker 
 
-Source: https://docs.docker.com/engine/install/rhel/
+Source: https://docs.docker.com/engine/install/
 
 
 ### Enable GPU for docker
@@ -111,31 +110,33 @@ aws ecr get-login-password --region us-west-2 | docker login --username AWS --pa
 docker pull 763104351884.dkr.ecr.us-west-2.amazonaws.com/sagemaker-tritonserver:25.04-py3
 ```
 
+## Running Triton Server
 ### Run docker container
 
 Source: https://github.com/triton-inference-server/tutorials/tree/main/Conceptual_Guide/Part_1-model_deployment#setting-up-the-model-repository
 
 For instance
 ```
-docker run --gpus=all -it --shm-size=256m --rm -p8000:8000 -p8001:8001 -p8002:8002 -v $(pwd)/models/optim-span-marker-xlm-roberta-base-conll2003/onnx/triton_model_repository:/models 763104351884.dkr.ecr.us-west-2.amazonaws.com/sagemaker-tritonserver:25.04-py3
+docker run --gpus=all -it --shm-size=256m --rm -p8000:8000 -p8001:8001 -p8002:8002 -v $(pwd)/triton_model_repository:/models 763104351884.dkr.ecr.us-west-2.amazonaws.com/sagemaker-tritonserver:25.04-py3
 ```
 
-### Run triton inference server
-Compile the model to tensorrt, ensure dimensions are aligned with the config above!
+### Compile to TensorRT
+Compile the model to tensorrt
 ```
 /usr/src/tensorrt/bin/trtexec \
-  --onnx=/models/spanmarker/1/model.onnx \
-  --saveEngine=/models/spanmarker/1/model.plan \
-  --minShapes=input_ids:1x256,attention_mask:1x256x256,position_ids:1x256,num_marker_pairs.1:1,num_words.1:1 \
-  --optShapes=input_ids:1x256,attention_mask:1x256x256,position_ids:1x256,num_marker_pairs.1:1,num_words.1:1 \
-  --maxShapes=input_ids:1x256,attention_mask:1x256x256,position_ids:1x256,num_marker_pairs.1:1,num_words.1:1
+--onnx=/models/spanmarker/1/model.onnx \
+--saveEngine=/models/spanmarker/1/model.plan \
+--fp16 # optional
 ```
-Start the server!
+
+
+### Start the server!
 ```
 tritonserver --model-repository=/models
 ```
 
 ## Performance analyzer
+We can verify the latency
 ```
 docker pull nvcr.io/nvidia/tritonserver:24.12-py3-sdk
 ```
@@ -145,15 +146,15 @@ and then
 docker run -ti --rm --gpus=all --network=host -v $PWD:/mnt --name triton-client nvcr.io/nvidia/tritonserver:24.12-py3-sdk
 ```
 ```
-perf_analyzer -m spanmarker --request-rate-range 10:50:10
+perf_analyzer -m spanmarker --request-rate-range 20:100:20
 ```
 At the end, you should see something like
 ```
 Inferences/Second vs. Client Average Batch Latency
-Request Rate: 10, throughput: 9.99449 infer/sec, latency 3704 usec
-Request Rate: 20, throughput: 19.9762 infer/sec, latency 3688 usec
-Request Rate: 30, throughput: 29.9609 infer/sec, latency 3683 usec
-Request Rate: 40, throughput: 39.9427 infer/sec, latency 3647 usec
-Request Rate: 50, throughput: 49.9861 infer/sec, latency 3674 usec
+Request Rate: 20, throughput: 19.9787 infer/sec, latency 2276 usec
+Request Rate: 40, throughput: 39.9499 infer/sec, latency 2259 usec
+Request Rate: 60, throughput: 59.9654 infer/sec, latency 2251 usec
+Request Rate: 80, throughput: 79.9693 infer/sec, latency 2243 usec
+Request Rate: 100, throughput: 99.9648 infer/sec, latency 2130 usec
 ```
-~3.6ms of latency, for a model with 278,055,941 parameters, no quantization and poorly optimized sequence length, not bad!
+Stable ~2ms of latency for a load of up to 100 TPS, for a model with 278,055,941 parameters and fixed, overly large sequence length, not bad!
